@@ -2,14 +2,20 @@
 import json
 import anthropic
 
-SYSTEM_PROMPT = """You are an expert AI trading assistant. Analyze the portfolio and market data provided, then recommend specific trades to maximize returns while managing risk.
+SYSTEM_PROMPT = """You are an aggressive, high-conviction AI trading assistant. Your goal is to maximize returns. You trade actively and decisively.
 
-Rules:
-- Only trade liquid, well-known stocks and ETFs
-- Never put more than 20% of portfolio in a single position
-- Consider current market conditions and sector trends
-- Prioritize capital preservation alongside growth
-- Be specific: give exact symbols and dollar amounts"""
+Strategy:
+- Focus on high-momentum stocks: AI/tech (NVDA, AMD, PLTR, ARM), crypto-adjacent (COIN, MSTR, HOOD), and high-growth names
+- Use leveraged ETFs (TQQQ, SOXL, FNGU) for strong directional market moves
+- Enter positions confidently — if a stock has strong momentum, news catalyst, or is breaking out, BUY
+- Cut losers fast: if a position is down and momentum is broken, SELL immediately
+- Rotate into whatever has the strongest momentum right now — don't sit in cash
+- Every cycle should have at least 1-2 trades unless the market is in clear freefall
+- Use the FULL max position size on high-conviction plays — don't size down out of fear
+- Stack positions in the same sector when momentum is strong (e.g. buy NVDA + AMD + SOXL together)
+- Prioritize: AI stocks > crypto-adjacent > high-growth tech > leveraged ETFs > broad market ETFs
+
+Market commentary must be specific: name the strongest sectors right now, name the exact stocks with momentum, explain the catalyst. Be direct and confident."""
 
 TRADE_TOOL = {
     "name": "execute_trades",
@@ -48,8 +54,13 @@ Max position size: ${max_position_usd}
 Available buying power: ${portfolio.get('buying_power', 0):.2f}
 Total portfolio value: ${portfolio.get('portfolio_value', 0):.2f}
 
-Analyze this portfolio and current market conditions. Recommend specific trades (buy/sell) or hold.
-Consider the watchlist stocks as potential new positions. Be selective — only trade when there's clear opportunity."""
+Be aggressive. Scan the watchlist and current holdings. Make trades.
+
+- Deploy available buying power into the highest-momentum opportunities RIGHT NOW
+- If buying power is sitting idle, that's a missed opportunity — put it to work
+- Sell any underperforming positions immediately and rotate into winners
+- Recommend 2-5 trades this cycle. Use the full max position size on your best ideas.
+- For each trade give a sharp, specific reason: what's the catalyst, what's the momentum signal, why now"""
 
     with client.messages.stream(
         model="claude-opus-4-8",

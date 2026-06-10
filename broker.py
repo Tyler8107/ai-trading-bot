@@ -5,9 +5,16 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 WATCHLIST = [
-    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA",
-    "JPM", "V", "UNH", "XOM", "BRK.B",
-    "SPY", "QQQ", "GLD", "TLT", "IWM",
+    # High-momentum tech & AI plays
+    "NVDA", "TSLA", "META", "AAPL", "MSFT", "GOOGL", "AMZN", "AMD",
+    "PLTR", "SMCI", "ARM", "AVGO", "MSTR",
+    # High-growth / volatile
+    "COIN", "HOOD", "SOFI", "RBLX", "UBER", "ABNB", "SQ", "SHOP",
+    "MELI", "CRWD", "NET", "DDOG", "SNOW",
+    # Leveraged ETFs for aggressive plays
+    "TQQQ", "SOXL", "FNGU",
+    # Broad market
+    "QQQ", "SPY", "IWM",
 ]
 
 
