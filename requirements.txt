@@ -9,3 +9,4 @@ python-dotenv
 bcrypt
 schedule
 stripe
+psycopg2-binary

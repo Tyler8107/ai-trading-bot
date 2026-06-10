@@ -14,7 +14,10 @@ import bot_manager
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 
 app = Flask(__name__, static_folder="static", static_url_path="/")
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///trading.db"
+_db_url = os.environ.get("DATABASE_URL", "sqlite:///trading.db")
+if _db_url.startswith("postgres://"):
+    _db_url = _db_url.replace("postgres://", "postgresql://", 1)
+app.config["SQLALCHEMY_DATABASE_URI"] = _db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET", "change-me-in-production-use-long-random-string")
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=7)
