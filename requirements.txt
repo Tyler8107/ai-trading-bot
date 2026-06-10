@@ -1,0 +1,10 @@
+flask
+flask-cors
+flask-jwt-extended
+flask-sqlalchemy
+anthropic
+alpaca-py
+robin-stocks
+python-dotenv
+bcrypt
+schedule
