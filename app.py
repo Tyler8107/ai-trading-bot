@@ -158,7 +158,7 @@ def subscription_status():
     user = User.query.get(uid)
     return jsonify({
         "status": user.subscription_status,
-        "active": user.subscription_status == "active",
+        "active": user.subscription_status in ("active", "trialing"),
     })
 
 
@@ -183,6 +183,7 @@ def create_checkout():
         payment_method_types=["card"],
         line_items=[{"price": price_id, "quantity": 1}],
         mode="subscription",
+        subscription_data={"trial_period_days": 7},
         success_url=base_url + "/?subscribed=true",
         cancel_url=base_url + "/?canceled=true",
     )
@@ -222,7 +223,13 @@ def stripe_webhook():
 
     if event["type"] in ("customer.subscription.created", "customer.subscription.updated"):
         user.stripe_subscription_id = sub.get("id")
-        user.subscription_status = "active" if sub.get("status") == "active" else "inactive"
+        stripe_status = sub.get("status")
+        if stripe_status == "active":
+            user.subscription_status = "active"
+        elif stripe_status == "trialing":
+            user.subscription_status = "trialing"
+        else:
+            user.subscription_status = "inactive"
     elif event["type"] == "customer.subscription.deleted":
         user.subscription_status = "canceled"
 
@@ -237,7 +244,7 @@ def stripe_webhook():
 def start_bot():
     uid = get_jwt_identity()
     user = User.query.get(uid)
-    if user.subscription_status != "active":
+    if user.subscription_status not in ("active", "trialing"):
         return jsonify({"error": "subscription_required"}), 402
     s = BotSettings.query.filter_by(user_id=uid).first()
     if not s or not s.anthropic_api_key:
