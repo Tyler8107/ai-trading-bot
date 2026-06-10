@@ -20,6 +20,16 @@
     .trade-card.expanded .trade-reason { display:block; }
     .trade-card.expanded .trade-chevron { transform:rotate(180deg); }
     .trade-chevron { transition:transform .2s; display:inline-block; }
+    /* Modal */
+    .modal-backdrop { position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px; }
+    .modal-box { background:#0f172a;border:1px solid #334155;border-radius:16px;padding:28px;max-width:420px;width:100%;animation:modalIn .2s ease; }
+    @keyframes modalIn { from{opacity:0;transform:scale(.95)} to{opacity:1;transform:scale(1)} }
+    /* Toast */
+    .toast-container { position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none; }
+    .toast { background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:10px 18px;border-radius:10px;font-size:14px;white-space:nowrap;animation:toastIn .25s ease;pointer-events:auto; }
+    .toast.success { border-color:#0d9488;color:#2dd4bf; }
+    .toast.error { border-color:#dc2626;color:#f87171; }
+    @keyframes toastIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
   </style>
 </head>
 <body>
@@ -35,12 +45,14 @@ let state = {
   trades: [],
   botStatus: { running: false, status: "stopped", log: [], last_run: null, market_commentary: "" },
   settings: null,
-  settingsForm: null,   // persists form values across re-renders
+  settingsForm: null,
   subscription: { active: false, status: "inactive" },
   error: "",
   loading: false,
   botLoading: false,
   settingsSaved: false,
+  modal: null,   // { type: "confirm-start"|"subscribe"|"stop-confirm", ... }
+  toasts: [],
 };
 
 function setState(patch) {
@@ -108,7 +120,10 @@ async function subscribe() {
   try {
     const d = await api("POST", "/subscription/checkout");
     window.location.href = d.url;
-  } catch(e) { setState({ error: e.message, loading: false }); }
+  } catch(e) {
+    setState({ loading: false });
+    showToast(e.message || "Could not start checkout — try again", "error");
+  }
 }
 
 async function manageBilling() {
@@ -116,7 +131,10 @@ async function manageBilling() {
   try {
     const d = await api("POST", "/subscription/portal");
     window.location.href = d.url;
-  } catch(e) { setState({ error: e.message, loading: false }); }
+  } catch(e) {
+    setState({ loading: false });
+    showToast(e.message || "Could not open billing portal", "error");
+  }
 }
 
 async function loadSettings() {
@@ -172,20 +190,50 @@ function updateForm(key, value) {
   setState({ settingsForm: { ...base, [key]: value } });
 }
 
-async function toggleBot() {
-  if (!state.botStatus.running && !state.subscription.active) {
-    setState({ error: "You need an active subscription to run the bot — subscribe below.", page: "pricing" });
-    return;
+function showToast(msg, type = "success", duration = 3500) {
+  const id = Date.now();
+  setState({ toasts: [...state.toasts, { id, msg, type }] });
+  setTimeout(() => setState({ toasts: state.toasts.filter(t => t.id !== id) }), duration);
+}
+
+function showModal(modal) { setState({ modal }); }
+function closeModal() { setState({ modal: null }); }
+
+function toggleBot() {
+  if (state.botStatus.running) {
+    showModal({ type: "stop-confirm" });
+  } else if (!state.subscription.active) {
+    showModal({ type: "subscribe" });
+  } else {
+    showModal({ type: "confirm-start" });
   }
+}
+
+async function doStartBot() {
+  closeModal();
   setState({ botLoading: true });
   try {
-    if (state.botStatus.running) await api("POST", "/bot/stop");
-    else await api("POST", "/bot/start");
+    await api("POST", "/bot/start");
     await loadDashboard();
+    showToast("Bot is running — Claude is analyzing your portfolio", "success");
   } catch(e) {
-    if (e.message === "subscription_required") setState({ page: "pricing" });
-    else setState({ error: e.message });
+    if (e.message === "subscription_required") showModal({ type: "subscribe" });
+    else if (e.message.includes("broker") || e.message.includes("Configure")) {
+      showToast("Connect a brokerage account first", "error");
+      setTimeout(() => goSettings(), 1200);
+    } else showToast(e.message, "error");
   }
+  setState({ botLoading: false });
+}
+
+async function doStopBot() {
+  closeModal();
+  setState({ botLoading: true });
+  try {
+    await api("POST", "/bot/stop");
+    await loadDashboard();
+    showToast("Bot stopped", "success");
+  } catch(e) { showToast(e.message, "error"); }
   setState({ botLoading: false });
 }
 
@@ -345,11 +393,7 @@ function renderDashboard() {
     return card;
   });
 
-  const errBanner = state.error ? el("div", {
-    className: "bg-red-900/30 border border-red-700 text-red-400 rounded-lg px-4 py-3 text-sm"
-  }, state.error + (state.error.includes("not configured") ? " — " : ""),
-    state.error.includes("not configured") ? el("a", { href: "#", className: "underline", onClick: e => { e.preventDefault(); goSettings(); } }, "Go to Settings") : null,
-  ) : null;
+  const errBanner = null; // errors now shown as toasts
 
   // AI Market Analysis card
   const commentary = bot.market_commentary;
@@ -617,6 +661,85 @@ function goSettings() {
   loadSettings();
 }
 
+// ── Modals ──────────────────────────────────────────────────────────────────
+function renderModal() {
+  const m = state.modal;
+  if (!m) return null;
+
+  const backdrop = el("div", { className: "modal-backdrop", onClick: e => { if (e.target === backdrop) closeModal(); } });
+
+  let box;
+  if (m.type === "confirm-start") {
+    const s = state.settings || {};
+    box = el("div", { className: "modal-box" },
+      el("div", { className: "text-3xl mb-3 text-center" }, "🤖"),
+      el("h2", { className: "text-white font-bold text-xl text-center mb-2" }, "Start AI Trading Bot?"),
+      el("p", { className: "text-slate-400 text-sm text-center mb-5" }, "Claude will analyze your portfolio every " + (s.run_interval_minutes || 30) + " min and trade automatically."),
+      el("div", { className: "bg-slate-800 rounded-xl p-4 mb-5 space-y-2 text-sm" },
+        el("div", { className: "flex justify-between" }, el("span", { className: "text-slate-400" }, "Broker"), el("span", { className: "text-white capitalize" }, s.broker || "—")),
+        el("div", { className: "flex justify-between" }, el("span", { className: "text-slate-400" }, "Max per trade"), el("span", { className: "text-white" }, "$" + (s.max_position_usd || 25))),
+        el("div", { className: "flex justify-between" }, el("span", { className: "text-slate-400" }, "Daily loss limit"), el("span", { className: "text-white" }, "$" + (s.max_daily_loss_usd || 50))),
+        el("div", { className: "flex justify-between" }, el("span", { className: "text-slate-400" }, "Mode"), el("span", { className: s.dry_run !== false ? "text-yellow-400" : "text-red-400" }, s.dry_run !== false ? "Simulation (safe)" : "⚠️ LIVE — real money")),
+      ),
+      el("button", {
+        className: "w-full bg-teal-500 hover:bg-teal-400 text-black font-bold py-3 rounded-xl transition mb-2",
+        onClick: doStartBot,
+      }, "Confirm — Start Bot"),
+      el("button", {
+        className: "w-full text-slate-400 hover:text-white py-2 text-sm transition",
+        onClick: closeModal,
+      }, "Cancel"),
+    );
+  } else if (m.type === "stop-confirm") {
+    box = el("div", { className: "modal-box text-center" },
+      el("div", { className: "text-3xl mb-3" }, "⏹️"),
+      el("h2", { className: "text-white font-bold text-xl mb-2" }, "Stop the bot?"),
+      el("p", { className: "text-slate-400 text-sm mb-6" }, "The bot will finish its current cycle and stop. Open positions stay open."),
+      el("button", {
+        className: "w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl transition mb-2",
+        onClick: doStopBot,
+      }, "Stop Bot"),
+      el("button", {
+        className: "w-full text-slate-400 hover:text-white py-2 text-sm transition",
+        onClick: closeModal,
+      }, "Keep Running"),
+    );
+  } else if (m.type === "subscribe") {
+    const features = ["Claude AI trades your portfolio automatically", "Full reasoning on every trade", "Paper trading to test risk-free", "Cancel anytime"];
+    box = el("div", { className: "modal-box" },
+      el("div", { className: "text-center mb-5" },
+        el("div", { className: "text-4xl mb-2" }, "🚀"),
+        el("h2", { className: "text-white font-bold text-xl mb-1" }, "Subscribe to Start Trading"),
+        el("p", { className: "text-slate-400 text-sm" }, "3-day free trial, then $19/month"),
+      ),
+      el("ul", { className: "space-y-2 mb-5" },
+        ...features.map(f => el("li", { className: "flex items-center gap-2 text-slate-300 text-sm" },
+          el("span", { className: "text-teal-400" }, "✓"), f
+        ))
+      ),
+      el("button", {
+        className: "w-full bg-teal-500 hover:bg-teal-400 disabled:opacity-60 text-black font-bold py-3 rounded-xl transition mb-2",
+        disabled: state.loading,
+        onClick: () => { closeModal(); subscribe(); },
+      }, state.loading ? "Loading..." : "Start Free Trial →"),
+      el("button", {
+        className: "w-full text-slate-400 hover:text-white py-2 text-sm transition",
+        onClick: closeModal,
+      }, "Not now"),
+    );
+  }
+
+  backdrop.appendChild(box);
+  return backdrop;
+}
+
+function renderToasts() {
+  if (!state.toasts.length) return null;
+  const container = el("div", { className: "toast-container" });
+  state.toasts.forEach(t => container.appendChild(el("div", { className: "toast " + t.type }, t.msg)));
+  return container;
+}
+
 // ── Render ─────────────────────────────────────────────────────────────────
 function render() {
   const app = document.getElementById("app");
@@ -631,6 +754,10 @@ function render() {
     default: view = renderLogin(false);
   }
   app.appendChild(view);
+  const modal = renderModal();
+  if (modal) app.appendChild(modal);
+  const toasts = renderToasts();
+  if (toasts) app.appendChild(toasts);
 }
 
 const urlParams = new URLSearchParams(window.location.search);
