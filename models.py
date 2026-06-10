@@ -25,9 +25,9 @@ class BotSettings(db.Model):
     rh_username = db.Column(db.String(120))
     rh_password = db.Column(db.String(256))
     anthropic_api_key = db.Column(db.String(256))
-    max_position_usd = db.Column(db.Float, default=100.0)
+    max_position_usd = db.Column(db.Float, default=25.0)
     max_daily_loss_usd = db.Column(db.Float, default=50.0)
-    run_interval_minutes = db.Column(db.Integer, default=60)
+    run_interval_minutes = db.Column(db.Integer, default=30)
     dry_run = db.Column(db.Boolean, default=True)
     bot_active = db.Column(db.Boolean, default=False)
 
