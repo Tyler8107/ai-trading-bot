@@ -63,7 +63,7 @@ def register():
     settings = BotSettings(user_id=user.id)
     db.session.add(settings)
     db.session.commit()
-    token = create_access_token(identity=user.id)
+    token = create_access_token(identity=str(user.id))
     return jsonify({"token": token, "email": user.email}), 201
 
 
@@ -75,7 +75,7 @@ def login():
     user = User.query.filter_by(email=email).first()
     if not user or not bcrypt.checkpw(password.encode(), user.password_hash.encode()):
         return jsonify({"error": "Invalid credentials"}), 401
-    token = create_access_token(identity=user.id)
+    token = create_access_token(identity=str(user.id))
     return jsonify({"token": token, "email": user.email})
 
 
@@ -84,7 +84,7 @@ def login():
 @app.route("/api/settings", methods=["GET"])
 @jwt_required()
 def get_settings():
-    uid = get_jwt_identity()
+    uid = int(get_jwt_identity())
     s = BotSettings.query.filter_by(user_id=uid).first()
     if not s:
         return jsonify({}), 404
@@ -105,7 +105,7 @@ def get_settings():
 @app.route("/api/settings", methods=["PUT"])
 @jwt_required()
 def update_settings():
-    uid = get_jwt_identity()
+    uid = int(get_jwt_identity())
     s = BotSettings.query.filter_by(user_id=uid).first()
     data = request.json
     if "broker" in data: s.broker = data["broker"]
@@ -131,7 +131,7 @@ def update_settings():
 @app.route("/api/portfolio", methods=["GET"])
 @jwt_required()
 def get_portfolio():
-    uid = get_jwt_identity()
+    uid = int(get_jwt_identity())
     s = BotSettings.query.filter_by(user_id=uid).first()
     if not s:
         return jsonify({"error": "No settings configured"}), 400
@@ -154,7 +154,7 @@ def get_portfolio():
 @app.route("/api/trades", methods=["GET"])
 @jwt_required()
 def get_trades():
-    uid = get_jwt_identity()
+    uid = int(get_jwt_identity())
     trades = Trade.query.filter_by(user_id=uid).order_by(Trade.timestamp.desc()).limit(50).all()
     return jsonify([{
         "id": t.id,
@@ -172,7 +172,7 @@ def get_trades():
 @app.route("/api/subscription/status", methods=["GET"])
 @jwt_required()
 def subscription_status():
-    uid = get_jwt_identity()
+    uid = int(get_jwt_identity())
     user = User.query.get(uid)
     return jsonify({
         "status": user.subscription_status,
@@ -183,7 +183,7 @@ def subscription_status():
 @app.route("/api/subscription/checkout", methods=["POST"])
 @jwt_required()
 def create_checkout():
-    uid = get_jwt_identity()
+    uid = int(get_jwt_identity())
     user = User.query.get(uid)
     price_id = os.environ.get("STRIPE_PRICE_ID", "")
     if not price_id:
@@ -211,7 +211,7 @@ def create_checkout():
 @app.route("/api/subscription/portal", methods=["POST"])
 @jwt_required()
 def billing_portal():
-    uid = get_jwt_identity()
+    uid = int(get_jwt_identity())
     user = User.query.get(uid)
     if not user.stripe_customer_id:
         return jsonify({"error": "No billing account"}), 400
@@ -260,7 +260,7 @@ def stripe_webhook():
 @app.route("/api/bot/start", methods=["POST"])
 @jwt_required()
 def start_bot():
-    uid = get_jwt_identity()
+    uid = int(get_jwt_identity())
     user = User.query.get(uid)
     if user.subscription_status not in ("active", "trialing"):
         return jsonify({"error": "subscription_required"}), 402
@@ -278,7 +278,7 @@ def start_bot():
 @app.route("/api/bot/stop", methods=["POST"])
 @jwt_required()
 def stop_bot():
-    uid = get_jwt_identity()
+    uid = int(get_jwt_identity())
     bot_manager.stop_bot(uid)
     s = BotSettings.query.filter_by(user_id=uid).first()
     if s:
@@ -290,7 +290,7 @@ def stop_bot():
 @app.route("/api/bot/status", methods=["GET"])
 @jwt_required()
 def bot_status():
-    uid = get_jwt_identity()
+    uid = int(get_jwt_identity())
     return jsonify(bot_manager.get_status(uid))
 
 
