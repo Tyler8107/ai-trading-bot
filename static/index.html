@@ -148,23 +148,33 @@ function buildForm(s) {
 }
 
 async function saveSettings() {
-  if (!state.settingsForm) return;
+  // Ensure form exists even if loadSettings failed
+  if (!state.settingsForm) {
+    setState({ error: "Form not loaded — please refresh the page and try again." });
+    return;
+  }
   setState({ loading: true, error: "" });
   try {
     await api("PUT", "/settings", state.settingsForm);
-    setState({ loading: false, settingsSaved: true });
-    setTimeout(() => setState({ settingsSaved: false }), 3000);
-  } catch(e) { setState({ error: e.message, loading: false }); }
+    // Reload subscription status so Start Bot reflects latest state
+    const sub = await api("GET", "/subscription/status").catch(() => state.subscription);
+    setState({ loading: false, settingsSaved: true, subscription: sub });
+    setTimeout(() => setState({ settingsSaved: false }), 4000);
+  } catch(e) {
+    const msg = e.message === "Unauthorized" ? "Session expired — please log out and log back in." : e.message;
+    setState({ error: msg, loading: false });
+  }
 }
 
 function updateForm(key, value) {
-  const form = { ...state.settingsForm, [key]: value };
-  setState({ settingsForm: form });
+  // Initialize form from defaults if it somehow wasn't set
+  const base = state.settingsForm || buildForm(state.settings || {});
+  setState({ settingsForm: { ...base, [key]: value } });
 }
 
 async function toggleBot() {
   if (!state.botStatus.running && !state.subscription.active) {
-    setState({ page: "pricing" });
+    setState({ error: "You need an active subscription to run the bot — subscribe below.", page: "pricing" });
     return;
   }
   setState({ botLoading: true });
@@ -442,10 +452,11 @@ const BROKERS = [
 ];
 
 function renderSettings() {
-  if (!state.settingsForm && state.settings) {
-    state.settingsForm = buildForm(state.settings);
+  // Always initialize — don't leave settingsForm null even if loadSettings failed
+  if (!state.settingsForm) {
+    state.settingsForm = buildForm(state.settings || {});
   }
-  const form = state.settingsForm || buildForm({});
+  const form = state.settingsForm;
   const broker = BROKERS.find(b => b.id === form.broker) || BROKERS[0];
 
   function field(label, hint, inputEl) {
@@ -537,7 +548,20 @@ function renderSettings() {
       ),
       errEl,
       saveBtn,
-      el("p", { className: "text-center text-slate-500 text-xs pb-4" }, "Credentials are encrypted. Claude AI is built in — no extra API key needed."),
+      state.settingsSaved
+        ? el("div", { className: "bg-teal-900/30 border border-teal-600 rounded-xl p-4 text-center" },
+            el("p", { className: "text-teal-400 font-semibold mb-1" }, "✓ Brokerage connected!"),
+            state.subscription?.active
+              ? el("button", {
+                  className: "mt-2 bg-teal-500 hover:bg-teal-400 text-black font-bold px-6 py-2 rounded-lg transition",
+                  onClick: () => { setState({ page: "dashboard" }); loadDashboard(); },
+                }, "Go to Dashboard & Start Bot →")
+              : el("button", {
+                  className: "mt-2 bg-teal-500 hover:bg-teal-400 text-black font-bold px-6 py-2 rounded-lg transition",
+                  onClick: () => setState({ page: "pricing" }),
+                }, "Subscribe to Start Trading →"),
+          )
+        : el("p", { className: "text-center text-slate-500 text-xs pb-4" }, "Credentials are encrypted. Claude AI is built in — no extra API key needed."),
     ),
   );
 }
