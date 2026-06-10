@@ -250,8 +250,8 @@ def start_bot():
     if user.subscription_status not in ("active", "trialing"):
         return jsonify({"error": "subscription_required"}), 402
     s = BotSettings.query.filter_by(user_id=uid).first()
-    if not s or not s.anthropic_api_key:
-        return jsonify({"error": "Configure your API keys first"}), 400
+    if not s or (not s.alpaca_api_key and not s.rh_username):
+        return jsonify({"error": "Connect a brokerage account first"}), 400
     ok = bot_manager.start_bot(uid, s)
     if not ok:
         return jsonify({"error": "Bot already running"}), 409

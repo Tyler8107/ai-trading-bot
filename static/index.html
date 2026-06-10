@@ -413,15 +413,43 @@ function renderDashboard() {
   );
 }
 
+const BROKERS = [
+  {
+    id: "alpaca",
+    name: "Alpaca",
+    icon: "🦙",
+    desc: "Free account, fractional shares, paper trading included.",
+    link: "https://alpaca.markets",
+    linkLabel: "Create free account →",
+    fields: [
+      { key: "alpaca_api_key", label: "API Key", type: "text", placeholder: "PKXXXXXXXXXXXXXXXX" },
+      { key: "alpaca_secret_key", label: "Secret Key", type: "password", placeholder: "Leave blank to keep existing" },
+    ],
+    extra: "paperToggle",
+  },
+  {
+    id: "robinhood",
+    name: "Robinhood",
+    icon: "🪶",
+    desc: "Sign in with your existing Robinhood account.",
+    fields: [
+      { key: "rh_username", label: "Email", type: "email", placeholder: "you@example.com" },
+      { key: "rh_password", label: "Password", type: "password", placeholder: "Leave blank to keep existing" },
+    ],
+  },
+  { id: "webull",  name: "Webull",               icon: "📊", desc: "Coming soon", disabled: true, fields: [] },
+  { id: "ibkr",   name: "Interactive Brokers",   icon: "🏦", desc: "Coming soon", disabled: true, fields: [] },
+];
+
 function renderSettings() {
-  // Initialize form from settings if not yet set
   if (!state.settingsForm && state.settings) {
     state.settingsForm = buildForm(state.settings);
   }
   const form = state.settingsForm || buildForm({});
+  const broker = BROKERS.find(b => b.id === form.broker) || BROKERS[0];
 
   function field(label, hint, inputEl) {
-    const children = [el("label", { className: "block text-sm font-medium text-slate-300 mb-1" }, label)];
+    const children = [el("label", { className: "block text-sm font-medium text-slate-300 mb-1.5" }, label)];
     if (hint) children.push(el("p", { className: "text-xs text-slate-500 mb-2" }, hint));
     children.push(inputEl);
     return el("div", null, ...children);
@@ -435,32 +463,39 @@ function renderSettings() {
     return e;
   };
 
-  // Broker selector
-  const brokerOptions = [
-    ["Alpaca", "alpaca"],
-    ["Robinhood", "robinhood"],
-  ];
-
-  const alpacaFields = el("div", { className: "space-y-5 mt-4" },
-    el("div", { className: "bg-slate-800/60 border border-slate-600 rounded-lg p-4 text-xs text-slate-400" },
-      el("p", { className: "font-medium text-slate-300 mb-1" }, "🔗 Alpaca connects any brokerage"),
-      el("p", null, "Alpaca lets you link Fidelity, Schwab, TD Ameritrade and more. Get your free API key at alpaca.markets."),
-    ),
-    field("Alpaca API Key", null, mkInput("alpaca_api_key", "text", "PKXXXXXXXX")),
-    field("Alpaca Secret Key", null, mkInput("alpaca_secret_key", "password", "Leave blank to keep existing")),
-    field("Trading Mode", null,
-      toggleGroup([["Paper (Simulated)", true], ["Live (Real Money)", false]], form.alpaca_paper, val => updateForm("alpaca_paper", val))
-    ),
+  const brokerGrid = el("div", { className: "grid grid-cols-2 gap-3" },
+    ...BROKERS.map(b =>
+      el("button", {
+        type: "button",
+        disabled: b.disabled,
+        className: "relative text-left p-4 rounded-xl border transition " +
+          (b.disabled ? "opacity-40 cursor-not-allowed bg-slate-800 border-slate-700" :
+            form.broker === b.id
+              ? "bg-teal-900/30 border-teal-500 ring-1 ring-teal-500"
+              : "bg-slate-800 border-slate-600 hover:border-slate-400"),
+        onClick: () => { if (!b.disabled) updateForm("broker", b.id); },
+      },
+        el("div", { className: "flex items-center gap-2 mb-1" },
+          el("span", { className: "text-xl" }, b.icon),
+          el("span", { className: "text-white font-medium text-sm" }, b.name),
+          form.broker === b.id && !b.disabled ? el("span", { className: "ml-auto text-teal-400 text-xs font-bold" }, "✓") : null,
+        ),
+        el("p", { className: "text-slate-400 text-xs leading-snug" }, b.desc),
+      )
+    )
   );
 
-  const rhFields = el("div", { className: "space-y-5 mt-4" },
-    el("div", { className: "bg-slate-800/60 border border-slate-600 rounded-lg p-4 text-xs text-slate-400" },
-      el("p", { className: "font-medium text-slate-300 mb-1" }, "🔗 Connect Robinhood directly"),
-      el("p", null, "Enter your Robinhood login. Trades are executed directly through your account."),
-    ),
-    field("Robinhood Email", null, mkInput("rh_username", "email", "you@example.com")),
-    field("Robinhood Password", null, mkInput("rh_password", "password", "Leave blank to keep existing")),
-  );
+  const credFields = broker.fields.length > 0 ? el("div", { className: "mt-6 pt-5 border-t border-slate-700 space-y-4" },
+    el("h3", { className: "text-white font-medium text-sm" }, broker.icon + " " + broker.name + " Login"),
+    ...(broker.fields.map(f => field(f.label, null, mkInput(f.key, f.type, f.placeholder)))),
+    broker.extra === "paperToggle" ? field("Trading Mode", null,
+      toggleGroup([["Paper (Simulated — safe to start)", true], ["Live (Real Money)", false]], form.alpaca_paper, val => updateForm("alpaca_paper", val))
+    ) : null,
+    broker.link ? el("a", {
+      href: broker.link, target: "_blank",
+      className: "inline-flex items-center gap-1 text-teal-400 text-xs hover:underline",
+    }, broker.linkLabel || "Learn more →") : null,
+  ) : null;
 
   const errEl = state.error ? el("div", { className: "bg-red-900/30 border border-red-700 text-red-400 rounded-lg px-4 py-3 text-sm" }, state.error) : null;
   const saveBtn = el("button", {
@@ -468,41 +503,41 @@ function renderSettings() {
     className: "w-full bg-teal-500 hover:bg-teal-400 disabled:opacity-50 text-black font-bold py-3 rounded-lg transition",
     disabled: state.loading,
     onClick: saveSettings,
-  }, state.loading ? "Saving..." : state.settingsSaved ? "Saved! ✓" : "Save Settings");
+  }, state.loading ? "Saving..." : state.settingsSaved ? "Connected! ✓" : "Save & Connect");
 
   return el("div", { className: "min-h-screen fade-in" },
     el("nav", { className: "border-b border-slate-800 px-6 py-4 flex items-center gap-4" },
       el("a", { href: "#", className: "text-slate-400 hover:text-white transition text-sm", onClick: e => { e.preventDefault(); goDashboard(); } }, "← Dashboard"),
-      el("span", { className: "text-white font-semibold" }, "Settings"),
+      el("span", { className: "text-white font-semibold" }, "Connect Your Brokerage"),
     ),
-    el("div", { className: "max-w-2xl mx-auto px-4 py-8 space-y-6" },
-      // Broker
+    el("div", { className: "max-w-xl mx-auto px-4 py-8 space-y-5" },
+      el("div", { className: "text-center pb-2" },
+        el("p", { className: "text-slate-400 text-sm" }, "Connect your broker and let Claude AI handle the rest. No API key required."),
+      ),
       el("div", { className: "bg-slate-900 border border-slate-700 rounded-xl p-6" },
-        el("h2", { className: "text-white font-semibold text-lg mb-4" }, "Brokerage Connection"),
-        field("Select your broker", null,
-          toggleGroup(brokerOptions, form.broker, val => updateForm("broker", val))
-        ),
-        form.broker === "alpaca" ? alpacaFields : rhFields,
+        el("h2", { className: "text-white font-semibold mb-4" }, "Select a Brokerage"),
+        brokerGrid,
+        credFields,
       ),
-      // AI
-      el("div", { className: "bg-slate-900 border border-slate-700 rounded-xl p-6 space-y-5" },
-        el("h2", { className: "text-white font-semibold text-lg" }, "AI (Claude)"),
-        field("Anthropic API Key", "Get at console.anthropic.com — Claude Opus 4 analyzes markets and makes all trading decisions", mkInput("anthropic_api_key", "password", "sk-ant-... (leave blank to keep existing)")),
-      ),
-      // Risk
-      el("div", { className: "bg-slate-900 border border-slate-700 rounded-xl p-6 space-y-5" },
-        el("h2", { className: "text-white font-semibold text-lg" }, "Risk Controls"),
-        el("div", { className: "grid grid-cols-2 gap-4" },
-          field("Max Position ($)", "Max $ per trade", mkNumberInput("max_position_usd", "100")),
-          field("Max Daily Loss ($)", "Bot pauses if hit", mkNumberInput("max_daily_loss_usd", "50")),
+      el("details", { className: "bg-slate-900 border border-slate-700 rounded-xl overflow-hidden" },
+        el("summary", { className: "p-5 cursor-pointer text-white font-medium flex items-center justify-between select-none hover:bg-slate-800/50 transition list-none" },
+          el("span", null, "⚙️  Risk Controls"),
+          el("span", { className: "text-slate-500 text-xs" }, "optional — click to expand"),
         ),
-        field("Check Interval (min)", "How often Claude reviews your portfolio", mkNumberInput("run_interval_minutes", "60")),
-        field("Mode", null,
-          toggleGroup([["Simulation (safe)", true], ["Real trades", false]], form.dry_run, val => updateForm("dry_run", val))
+        el("div", { className: "px-6 pb-6 pt-4 space-y-5 border-t border-slate-700" },
+          el("div", { className: "grid grid-cols-2 gap-4" },
+            field("Max per trade ($)", null, mkNumberInput("max_position_usd", "100")),
+            field("Daily loss limit ($)", null, mkNumberInput("max_daily_loss_usd", "50")),
+          ),
+          field("Check every (minutes)", null, mkNumberInput("run_interval_minutes", "60")),
+          field("Mode", "Start in simulation to test before going live",
+            toggleGroup([["Simulation (recommended)", true], ["Live trades", false]], form.dry_run, val => updateForm("dry_run", val))
+          ),
         ),
       ),
       errEl,
       saveBtn,
+      el("p", { className: "text-center text-slate-500 text-xs pb-4" }, "Credentials are encrypted. Claude AI is built in — no extra API key needed."),
     ),
   );
 }
@@ -524,7 +559,7 @@ function renderPricing() {
     el("div", { className: "max-w-lg mx-auto px-4 py-16 text-center" },
       el("div", { className: "text-5xl mb-4" }, "🚀"),
       el("h1", { className: "text-3xl font-bold text-white mb-3" }, "Start Trading with AI"),
-      el("p", { className: "text-slate-400 mb-10" }, "One flat monthly fee. Bring your own brokerage and API key."),
+      el("p", { className: "text-slate-400 mb-10" }, "One flat monthly fee. Connect your broker and go — Claude AI is included."),
       el("div", { className: "bg-slate-900 border border-teal-500/40 rounded-2xl p-8 mb-6 text-left" },
         el("div", { className: "flex items-end gap-2 mb-6" },
           el("span", { className: "text-5xl font-bold text-white" }, "$19"),

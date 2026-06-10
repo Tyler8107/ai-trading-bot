@@ -37,8 +37,9 @@ TRADE_TOOL = {
 }
 
 
-def get_trade_decisions(portfolio: dict, max_position_usd: float, api_key: str) -> dict:
-    client = anthropic.Anthropic(api_key=api_key)
+def get_trade_decisions(portfolio: dict, max_position_usd: float, api_key: str = None) -> dict:
+    import os
+    client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
 
     prompt = f"""Current portfolio state:
 {json.dumps(portfolio, indent=2)}

@@ -79,7 +79,7 @@ def start_bot(user_id: int, settings) -> bool:
                     stop_event.wait(settings.run_interval_minutes * 60)
                     continue
 
-                decisions = get_trade_decisions(portfolio, settings.max_position_usd, settings.anthropic_api_key)
+                decisions = get_trade_decisions(portfolio, settings.max_position_usd, settings.anthropic_api_key or None)
                 trades = decisions.get("trades", [])
                 commentary = decisions.get("market_commentary", "")
                 if commentary:
