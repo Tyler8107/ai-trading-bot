@@ -28,6 +28,21 @@ jwt = JWTManager(app)
 
 with app.app_context():
     db.create_all()
+    # Add columns that may be missing from older databases
+    try:
+        with db.engine.connect() as conn:
+            for sql in [
+                "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(64)",
+                "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(64)",
+                "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(20) DEFAULT 'inactive'",
+            ]:
+                try:
+                    conn.execute(db.text(sql))
+                except Exception:
+                    pass
+            conn.commit()
+    except Exception:
+        pass
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
