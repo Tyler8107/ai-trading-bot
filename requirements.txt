@@ -8,3 +8,4 @@ robin-stocks
 python-dotenv
 bcrypt
 schedule
+stripe

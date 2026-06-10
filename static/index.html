@@ -32,6 +32,7 @@ let state = {
   trades: [],
   botStatus: { running: false, status: "stopped", log: [], last_run: null },
   settings: null,
+  subscription: { active: false, status: "inactive" },
   error: "",
   loading: false,
   botLoading: false,
@@ -88,13 +89,30 @@ function logout() {
 
 async function loadDashboard() {
   try {
-    const [p, t, s] = await Promise.all([
+    const [p, t, s, sub] = await Promise.all([
       api("GET", "/portfolio").catch(e => ({ error: e.message })),
       api("GET", "/trades").catch(() => []),
       api("GET", "/bot/status").catch(() => ({})),
+      api("GET", "/subscription/status").catch(() => ({ active: false, status: "inactive" })),
     ]);
-    setState({ portfolio: p.error ? null : p, trades: t, botStatus: s, error: p.error || "" });
+    setState({ portfolio: p.error ? null : p, trades: t, botStatus: s, subscription: sub, error: p.error || "" });
   } catch(e) { setState({ error: e.message }); }
+}
+
+async function subscribe() {
+  setState({ loading: true });
+  try {
+    const d = await api("POST", "/subscription/checkout");
+    window.location.href = d.url;
+  } catch(e) { setState({ error: e.message, loading: false }); }
+}
+
+async function manageBilling() {
+  setState({ loading: true });
+  try {
+    const d = await api("POST", "/subscription/portal");
+    window.location.href = d.url;
+  } catch(e) { setState({ error: e.message, loading: false }); }
 }
 
 async function loadSettings() {
@@ -114,12 +132,19 @@ async function saveSettings(form) {
 }
 
 async function toggleBot() {
+  if (!state.botStatus.running && !state.subscription.active) {
+    setState({ page: "pricing" });
+    return;
+  }
   setState({ botLoading: true });
   try {
     if (state.botStatus.running) await api("POST", "/bot/stop");
     else await api("POST", "/bot/start");
     await loadDashboard();
-  } catch(e) { setState({ error: e.message }); }
+  } catch(e) {
+    if (e.message === "subscription_required") setState({ page: "pricing" });
+    else setState({ error: e.message });
+  }
   setState({ botLoading: false });
 }
 
@@ -297,6 +322,9 @@ function renderDashboard() {
       ),
       el("div", { className: "flex items-center gap-4" },
         el("span", { className: "text-slate-400 text-sm hidden sm:block" }, state.email),
+        state.subscription.active
+          ? el("a", { href: "#", className: "text-xs text-teal-400 border border-teal-700 px-2 py-0.5 rounded-full hover:border-teal-400 transition", onClick: e => { e.preventDefault(); manageBilling(); } }, "Pro ✓")
+          : el("a", { href: "#", className: "text-xs text-slate-400 border border-slate-600 px-2 py-0.5 rounded-full hover:border-teal-400 hover:text-teal-400 transition", onClick: e => { e.preventDefault(); setState({ page: "pricing" }); } }, "Upgrade"),
         el("a", { href: "#", className: "text-slate-400 hover:text-white text-sm transition", onClick: e => { e.preventDefault(); goSettings(); } }, "Settings"),
         el("a", { href: "#", className: "text-slate-400 hover:text-white text-sm transition", onClick: e => { e.preventDefault(); logout(); } }, "Logout"),
       ),
@@ -437,6 +465,50 @@ function renderSettings() {
   );
 }
 
+function renderPricing() {
+  const features = [
+    "Claude AI analyzes your portfolio every hour",
+    "Supports Alpaca + Robinhood brokerages",
+    "Automated buy/sell decisions 24/7",
+    "Real-time trade log and portfolio dashboard",
+    "Paper trading mode to test risk-free",
+    "Cancel anytime — no lock-in",
+  ];
+  return el("div", { className: "min-h-screen fade-in" },
+    el("nav", { className: "border-b border-slate-800 px-6 py-4 flex items-center gap-4" },
+      el("a", { href: "#", className: "text-slate-400 hover:text-white transition text-sm", onClick: e => { e.preventDefault(); goDashboard(); } }, "← Dashboard"),
+      el("span", { className: "text-white font-semibold" }, "Upgrade to Pro"),
+    ),
+    el("div", { className: "max-w-lg mx-auto px-4 py-16 text-center" },
+      el("div", { className: "text-5xl mb-4" }, "🚀"),
+      el("h1", { className: "text-3xl font-bold text-white mb-3" }, "Start Trading with AI"),
+      el("p", { className: "text-slate-400 mb-10" }, "One flat monthly fee. Bring your own brokerage and API key."),
+      el("div", { className: "bg-slate-900 border border-teal-500/40 rounded-2xl p-8 mb-6 text-left" },
+        el("div", { className: "flex items-end gap-2 mb-6" },
+          el("span", { className: "text-5xl font-bold text-white" }, "$19"),
+          el("span", { className: "text-slate-400 mb-2" }, "/ month"),
+        ),
+        el("ul", { className: "space-y-3 mb-8" },
+          ...features.map(f => el("li", { className: "flex items-center gap-3 text-slate-300 text-sm" },
+            el("span", { className: "text-teal-400 font-bold" }, "✓"),
+            f,
+          ))
+        ),
+        el("button", {
+          className: "w-full bg-teal-500 hover:bg-teal-400 disabled:opacity-50 text-black font-bold py-4 rounded-xl text-lg transition",
+          disabled: state.loading,
+          onClick: subscribe,
+        }, state.loading ? "Redirecting..." : "Subscribe — $19/mo"),
+      ),
+      el("p", { className: "text-slate-500 text-xs" }, "Payments secured by Stripe. Cancel anytime from your billing portal."),
+      state.subscription.status === "active"
+        ? el("p", { className: "mt-4 text-teal-400 text-sm" }, "You already have an active subscription! ",
+            el("a", { href: "#", className: "underline", onClick: e => { e.preventDefault(); goDashboard(); } }, "Go to Dashboard"))
+        : null,
+    ),
+  );
+}
+
 // ── Navigation ─────────────────────────────────────────────────────────────
 function goDashboard() {
   setState({ page: "dashboard", error: "" });
@@ -458,9 +530,18 @@ function render() {
     case "register": view = renderLogin(true);  break;
     case "dashboard": view = renderDashboard(); break;
     case "settings": view = renderSettings();  break;
+    case "pricing":  view = renderPricing();   break;
     default: view = renderLogin(false);
   }
   app.appendChild(view);
+}
+
+// Handle Stripe redirect params
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.get("subscribed") === "true" && state.token) {
+  window.history.replaceState({}, "", "/");
+  setState({ page: "dashboard" });
+  loadDashboard();
 }
 
 // Auto-refresh dashboard

@@ -8,6 +8,10 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # Stripe subscription fields
+    stripe_customer_id = db.Column(db.String(64))
+    stripe_subscription_id = db.Column(db.String(64))
+    subscription_status = db.Column(db.String(20), default="inactive")  # inactive, active, canceled
     settings = db.relationship("BotSettings", backref="user", uselist=False)
     trades = db.relationship("Trade", backref="user", lazy=True)
 

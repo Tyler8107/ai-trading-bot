@@ -1,6 +1,7 @@
 """Flask API backend for the AI Trading Bot web app."""
 import os
 import bcrypt
+import stripe
 from datetime import timedelta
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -9,6 +10,8 @@ from flask_jwt_extended import (
 )
 from models import db, User, BotSettings, Trade
 import bot_manager
+
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 
 app = Flask(__name__, static_folder="static", static_url_path="/")
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///trading.db"
@@ -146,12 +149,96 @@ def get_trades():
     } for t in trades])
 
 
+# ── Stripe ────────────────────────────────────────────────────────────────────
+
+@app.route("/api/subscription/status", methods=["GET"])
+@jwt_required()
+def subscription_status():
+    uid = get_jwt_identity()
+    user = User.query.get(uid)
+    return jsonify({
+        "status": user.subscription_status,
+        "active": user.subscription_status == "active",
+    })
+
+
+@app.route("/api/subscription/checkout", methods=["POST"])
+@jwt_required()
+def create_checkout():
+    uid = get_jwt_identity()
+    user = User.query.get(uid)
+    price_id = os.environ.get("STRIPE_PRICE_ID", "")
+    if not price_id:
+        return jsonify({"error": "Stripe not configured"}), 500
+
+    # Reuse or create Stripe customer
+    if not user.stripe_customer_id:
+        customer = stripe.Customer.create(email=user.email)
+        user.stripe_customer_id = customer.id
+        db.session.commit()
+
+    base_url = request.headers.get("Origin", "https://web-production-57f2.up.railway.app")
+    session = stripe.checkout.Session.create(
+        customer=user.stripe_customer_id,
+        payment_method_types=["card"],
+        line_items=[{"price": price_id, "quantity": 1}],
+        mode="subscription",
+        success_url=base_url + "/?subscribed=true",
+        cancel_url=base_url + "/?canceled=true",
+    )
+    return jsonify({"url": session.url})
+
+
+@app.route("/api/subscription/portal", methods=["POST"])
+@jwt_required()
+def billing_portal():
+    uid = get_jwt_identity()
+    user = User.query.get(uid)
+    if not user.stripe_customer_id:
+        return jsonify({"error": "No billing account"}), 400
+    base_url = request.headers.get("Origin", "https://web-production-57f2.up.railway.app")
+    session = stripe.billing_portal.Session.create(
+        customer=user.stripe_customer_id,
+        return_url=base_url + "/",
+    )
+    return jsonify({"url": session.url})
+
+
+@app.route("/api/webhook/stripe", methods=["POST"])
+def stripe_webhook():
+    payload = request.data
+    sig = request.headers.get("Stripe-Signature", "")
+    webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, webhook_secret)
+    except Exception:
+        return jsonify({"error": "Invalid signature"}), 400
+
+    sub = event["data"]["object"]
+    customer_id = sub.get("customer")
+    user = User.query.filter_by(stripe_customer_id=customer_id).first()
+    if not user:
+        return jsonify({}), 200
+
+    if event["type"] in ("customer.subscription.created", "customer.subscription.updated"):
+        user.stripe_subscription_id = sub.get("id")
+        user.subscription_status = "active" if sub.get("status") == "active" else "inactive"
+    elif event["type"] == "customer.subscription.deleted":
+        user.subscription_status = "canceled"
+
+    db.session.commit()
+    return jsonify({"received": True})
+
+
 # ── Bot control ───────────────────────────────────────────────────────────────
 
 @app.route("/api/bot/start", methods=["POST"])
 @jwt_required()
 def start_bot():
     uid = get_jwt_identity()
+    user = User.query.get(uid)
+    if user.subscription_status != "active":
+        return jsonify({"error": "subscription_required"}), 402
     s = BotSettings.query.filter_by(user_id=uid).first()
     if not s or not s.anthropic_api_key:
         return jsonify({"error": "Configure your API keys first"}), 400
