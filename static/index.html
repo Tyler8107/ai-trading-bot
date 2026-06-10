@@ -6,9 +6,7 @@
   <title>AI Trading Bot</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    tailwind.config = {
-      theme: { extend: { colors: { brand: "#00d4aa" } } }
-    };
+    tailwind.config = { theme: { extend: { colors: { brand: "#00d4aa" } } } };
   </script>
   <style>
     body { background: #0a0f1e; color: #e2e8f0; font-family: system-ui, sans-serif; }
@@ -17,6 +15,11 @@
     .fade-in { animation: fadeIn .3s ease; }
     @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
     ::-webkit-scrollbar{width:5px} ::-webkit-scrollbar-track{background:#0f172a} ::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
+    .trade-card { cursor:pointer; }
+    .trade-reason { display:none; }
+    .trade-card.expanded .trade-reason { display:block; }
+    .trade-card.expanded .trade-chevron { transform:rotate(180deg); }
+    .trade-chevron { transition:transform .2s; display:inline-block; }
   </style>
 </head>
 <body>
@@ -30,8 +33,9 @@ let state = {
   email: localStorage.getItem("email") || "",
   portfolio: null,
   trades: [],
-  botStatus: { running: false, status: "stopped", log: [], last_run: null },
+  botStatus: { running: false, status: "stopped", log: [], last_run: null, market_commentary: "" },
   settings: null,
+  settingsForm: null,   // persists form values across re-renders
   subscription: { active: false, status: "inactive" },
   error: "",
   loading: false,
@@ -84,7 +88,7 @@ async function register(email, password) {
 
 function logout() {
   localStorage.clear();
-  setState({ token: "", email: "", page: "login", portfolio: null, trades: [], error: "" });
+  setState({ token: "", email: "", page: "login", portfolio: null, trades: [], error: "", settingsForm: null });
 }
 
 async function loadDashboard() {
@@ -118,17 +122,44 @@ async function manageBilling() {
 async function loadSettings() {
   try {
     const s = await api("GET", "/settings");
-    setState({ settings: s });
+    // Only initialize settingsForm if it hasn't been set yet (don't overwrite user edits)
+    if (!state.settingsForm) {
+      setState({ settings: s, settingsForm: buildForm(s) });
+    } else {
+      setState({ settings: s });
+    }
   } catch(e) {}
 }
 
-async function saveSettings(form) {
+function buildForm(s) {
+  return {
+    broker: s.broker || "alpaca",
+    alpaca_api_key: s.alpaca_api_key || "",
+    alpaca_secret_key: "",
+    alpaca_paper: s.alpaca_paper !== false,
+    rh_username: s.rh_username || "",
+    rh_password: "",
+    anthropic_api_key: "",
+    max_position_usd: s.max_position_usd || 100,
+    max_daily_loss_usd: s.max_daily_loss_usd || 50,
+    run_interval_minutes: s.run_interval_minutes || 60,
+    dry_run: s.dry_run !== false,
+  };
+}
+
+async function saveSettings() {
+  if (!state.settingsForm) return;
   setState({ loading: true, error: "" });
   try {
-    await api("PUT", "/settings", form);
-    setState({ settings: form, loading: false, settingsSaved: true });
+    await api("PUT", "/settings", state.settingsForm);
+    setState({ loading: false, settingsSaved: true });
     setTimeout(() => setState({ settingsSaved: false }), 3000);
   } catch(e) { setState({ error: e.message, loading: false }); }
+}
+
+function updateForm(key, value) {
+  const form = { ...state.settingsForm, [key]: value };
+  setState({ settingsForm: form });
 }
 
 async function toggleBot() {
@@ -155,7 +186,7 @@ function el(tag, attrs, ...children) {
     for (const [k, v] of Object.entries(attrs)) {
       if (k === "className") e.className = v;
       else if (k.startsWith("on")) e.addEventListener(k.slice(2).toLowerCase(), v);
-      else if (k === "value" && (tag === "input" || tag === "select")) { e.value = v; }
+      else if (k === "value" && (tag === "input" || tag === "select" || tag === "textarea")) { e.value = v; }
       else if (k === "checked") e.checked = v;
       else if (k === "disabled") e.disabled = v;
       else if (k === "type" && tag === "input") e.type = v;
@@ -169,10 +200,10 @@ function el(tag, attrs, ...children) {
   return e;
 }
 
-function input(attrs) {
+function inp(attrs) {
   const e = document.createElement("input");
-  const baseClass = "w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 text-sm transition";
-  e.className = (attrs.className || "") + " " + baseClass;
+  const base = "w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 text-sm transition";
+  e.className = base;
   e.type = attrs.type || "text";
   if (attrs.placeholder) e.placeholder = attrs.placeholder;
   if (attrs.value !== undefined) e.value = attrs.value;
@@ -182,12 +213,25 @@ function input(attrs) {
   return e;
 }
 
+function toggleGroup(options, currentVal, onSelect) {
+  return el("div", { className: "flex gap-2 flex-wrap" }, ...options.map(([label, val]) =>
+    el("button", {
+      type: "button",
+      className: "flex-1 py-2.5 px-3 rounded-lg text-sm font-medium border transition min-w-fit " +
+        (currentVal === val
+          ? "bg-teal-500 border-teal-500 text-black"
+          : "bg-slate-800 border-slate-600 text-slate-300 hover:border-slate-400"),
+      onClick: () => onSelect(val),
+    }, label)
+  ));
+}
+
 // ── Pages ──────────────────────────────────────────────────────────────────
 function renderLogin(isRegister) {
   let emailVal = "", passVal = "";
   const err = el("div", { className: "bg-red-900/30 border border-red-700 text-red-400 rounded-lg px-4 py-3 mb-4 text-sm " + (state.error ? "" : "hidden") }, state.error);
-  const emailInput = input({ placeholder: "you@example.com", type: "email", onChange: e => emailVal = e.target.value });
-  const passInput = input({ placeholder: isRegister ? "min 8 characters" : "••••••••", type: "password", onChange: e => passVal = e.target.value });
+  const emailInput = inp({ placeholder: "you@example.com", type: "email", onChange: e => emailVal = e.target.value });
+  const passInput = inp({ placeholder: isRegister ? "min 8 characters" : "••••••••", type: "password", onChange: e => passVal = e.target.value });
   const btn = el("button", {
     type: "submit",
     className: "w-full bg-teal-500 hover:bg-teal-400 disabled:opacity-50 text-black font-bold py-3 rounded-lg transition",
@@ -203,30 +247,7 @@ function renderLogin(isRegister) {
     if (isRegister) register(emailVal, passVal);
     else login(emailVal, passVal);
   });
-
   if (state.loading) btn.disabled = true;
-
-  const switchLink = el("p", { className: "text-center text-slate-400 text-sm mt-6" },
-    isRegister ? "Already have an account? " : "Don't have an account? ",
-    el("a", {
-      href: "#",
-      className: "text-teal-400 hover:underline",
-      onClick: e => { e.preventDefault(); setState({ page: isRegister ? "login" : "register", error: "" }); }
-    }, isRegister ? "Sign in" : "Create one")
-  );
-
-  const card = el("div", { className: "bg-slate-900 border border-slate-700 rounded-2xl p-8 fade-in" },
-    el("h2", { className: "text-xl font-semibold text-white mb-6" }, isRegister ? "Create your account" : "Sign in to your account"),
-    err, form, switchLink
-  );
-
-  if (isRegister) {
-    card.append(el("div", { className: "mt-6 bg-slate-800 rounded-lg p-4 text-xs text-slate-400 space-y-1" },
-      el("p", { className: "font-medium text-slate-300 mb-1" }, "What you'll need:"),
-      el("p", null, "• Alpaca API key (free at alpaca.markets) — connects any brokerage"),
-      el("p", null, "• Anthropic API key (console.anthropic.com) — powers the AI"),
-    ));
-  }
 
   return el("div", { className: "min-h-screen flex items-center justify-center px-4" },
     el("div", { className: "w-full max-w-md" },
@@ -237,7 +258,16 @@ function renderLogin(isRegister) {
         ),
         el("p", { className: "text-slate-400" }, isRegister ? "Bring your own brokerage. Claude does the rest." : "Powered by Claude AI"),
       ),
-      card,
+      el("div", { className: "bg-slate-900 border border-slate-700 rounded-2xl p-8 fade-in" },
+        el("h2", { className: "text-xl font-semibold text-white mb-6" }, isRegister ? "Create your account" : "Sign in"),
+        err, form,
+        el("p", { className: "text-center text-slate-400 text-sm mt-6" },
+          isRegister ? "Already have an account? " : "Don't have an account? ",
+          el("a", { href: "#", className: "text-teal-400 hover:underline",
+            onClick: e => { e.preventDefault(); setState({ page: isRegister ? "login" : "register", error: "" }); }
+          }, isRegister ? "Sign in" : "Create one")
+        ),
+      ),
     )
   );
 }
@@ -247,7 +277,6 @@ function renderDashboard() {
   const bot = state.botStatus;
   const trades = state.trades;
 
-  // Bot status badge
   const dot = el("span", { className: "w-2 h-2 rounded-full " + (bot.running ? "bg-teal-400 pulse" : "bg-slate-500") });
   const statusText = el("span", { className: "text-sm " + (bot.running ? "text-teal-400 font-medium" : "text-slate-500") }, bot.status || "stopped");
   const lastRun = bot.last_run ? el("p", { className: "text-slate-500 text-xs mt-1" }, "Last cycle: " + bot.last_run) : null;
@@ -271,10 +300,9 @@ function renderDashboard() {
   const today = new Date().toISOString().slice(0, 10);
   const todayTrades = trades.filter(t => t.timestamp?.startsWith(today));
 
-  // Holdings list
   const holdingRows = Object.entries(holdings).map(([sym, h]) => {
     const pct = parseFloat(h.percent_change || 0) * 100;
-    return el("div", { className: "flex items-center justify-between py-2 border-b border-slate-800 last:border-0" },
+    return el("div", { className: "flex items-center justify-between py-2.5 border-b border-slate-800 last:border-0" },
       el("div", null,
         el("span", { className: "text-white font-medium" }, sym),
         el("span", { className: "text-slate-500 text-xs ml-2" }, parseFloat(h.quantity || 0).toFixed(4) + " shares"),
@@ -286,26 +314,26 @@ function renderDashboard() {
     );
   });
 
-  // Trades list
-  const tradeRows = trades.slice(0, 8).map(t =>
-    el("div", { className: "flex items-start justify-between py-2 border-b border-slate-800 last:border-0" },
-      el("div", { className: "flex items-center gap-2" },
-        el("span", { className: "text-xs font-bold px-2 py-0.5 rounded " + (t.action === "buy" ? "bg-teal-900 text-teal-400" : "bg-red-900 text-red-400") }, t.action.toUpperCase()),
-        el("div", null,
-          el("span", { className: "text-white text-sm font-medium" }, t.symbol),
-          t.dry_run ? el("span", { className: "text-xs text-slate-500 ml-1" }, "(sim)") : null,
-          el("p", { className: "text-slate-500 text-xs" }, (t.reason || "").slice(0, 50) + (t.reason?.length > 50 ? "…" : "")),
-        ),
+  // Trades — click to expand full AI reasoning
+  const tradeRows = trades.slice(0, 10).map(t => {
+    const card = el("div", { className: "trade-card py-2.5 border-b border-slate-800 last:border-0" });
+    const header = el("div", { className: "flex items-center justify-between gap-2" },
+      el("div", { className: "flex items-center gap-2 min-w-0" },
+        el("span", { className: "text-xs font-bold px-2 py-0.5 rounded shrink-0 " + (t.action === "buy" ? "bg-teal-900 text-teal-400" : "bg-red-900 text-red-400") }, t.action.toUpperCase()),
+        el("span", { className: "text-white text-sm font-medium" }, t.symbol),
+        t.dry_run ? el("span", { className: "text-xs text-slate-500" }, "(sim)") : null,
       ),
-      el("div", { className: "text-right shrink-0" },
-        el("p", { className: "text-white text-sm" }, "$" + t.amount_usd.toFixed(2)),
-        el("p", { className: "text-slate-500 text-xs" }, new Date(t.timestamp).toLocaleTimeString()),
+      el("div", { className: "flex items-center gap-3 shrink-0" },
+        el("span", { className: "text-white text-sm" }, "$" + t.amount_usd.toFixed(2)),
+        el("span", { className: "text-slate-500 text-xs" }, new Date(t.timestamp).toLocaleTimeString()),
+        el("span", { className: "trade-chevron text-slate-500 text-xs" }, "▼"),
       ),
-    )
-  );
-
-  // Log
-  const logLines = (bot.log || []).map(l => el("p", null, l));
+    );
+    const reason = el("div", { className: "trade-reason mt-2 bg-slate-800 rounded-lg p-3 text-sm text-slate-300 leading-relaxed" }, t.reason || "No reasoning recorded.");
+    card.append(header, reason);
+    card.addEventListener("click", () => card.classList.toggle("expanded"));
+    return card;
+  });
 
   const errBanner = state.error ? el("div", {
     className: "bg-red-900/30 border border-red-700 text-red-400 rounded-lg px-4 py-3 text-sm"
@@ -313,8 +341,20 @@ function renderDashboard() {
     state.error.includes("not configured") ? el("a", { href: "#", className: "underline", onClick: e => { e.preventDefault(); goSettings(); } }, "Go to Settings") : null,
   ) : null;
 
+  // AI Market Analysis card
+  const commentary = bot.market_commentary;
+  const analysisCard = commentary ? el("div", { className: "bg-slate-900 border border-teal-700/40 rounded-xl p-6" },
+    el("div", { className: "flex items-center gap-2 mb-3" },
+      el("span", { className: "text-lg" }, "🧠"),
+      el("h3", { className: "text-white font-semibold" }, "AI Market Analysis"),
+      el("span", { className: "text-xs text-teal-400 border border-teal-700 rounded-full px-2 py-0.5 ml-auto" }, "Latest from Claude"),
+    ),
+    el("p", { className: "text-slate-300 text-sm leading-relaxed" }, commentary),
+  ) : null;
+
+  const logLines = (bot.log || []).map(l => el("p", null, l));
+
   return el("div", { className: "min-h-screen fade-in" },
-    // Nav
     el("nav", { className: "border-b border-slate-800 px-6 py-4 flex items-center justify-between" },
       el("div", { className: "flex items-center gap-2" },
         el("span", { className: "text-2xl" }, "🤖"),
@@ -347,21 +387,24 @@ function renderDashboard() {
         statCard("Positions", Object.keys(holdings).length, "text-white", "active holdings"),
         statCard("Trades Today", todayTrades.length, "text-white", trades.some(t => t.dry_run) ? "includes simulations" : "live trades"),
       ),
+      // AI Analysis
+      analysisCard,
       el("div", { className: "grid lg:grid-cols-2 gap-6" },
         // Holdings
         el("div", { className: "bg-slate-900 border border-slate-700 rounded-xl p-6" },
           el("h3", { className: "text-white font-semibold mb-4" }, "Holdings"),
-          holdingRows.length ? el("div", { className: "space-y-0" }, ...holdingRows)
+          holdingRows.length ? el("div", null, ...holdingRows)
             : el("p", { className: "text-slate-500 text-sm" }, "No positions yet. Start the bot to begin trading."),
         ),
         // Trades
         el("div", { className: "bg-slate-900 border border-slate-700 rounded-xl p-6" },
-          el("h3", { className: "text-white font-semibold mb-4" }, "Recent Trades"),
-          tradeRows.length ? el("div", { className: "space-y-0" }, ...tradeRows)
+          el("h3", { className: "text-white font-semibold mb-1" }, "Recent Trades"),
+          el("p", { className: "text-slate-500 text-xs mb-4" }, "Tap any trade to see why Claude made this decision"),
+          tradeRows.length ? el("div", null, ...tradeRows)
             : el("p", { className: "text-slate-500 text-sm" }, "No trades yet."),
         ),
       ),
-      // Log
+      // Bot log
       logLines.length ? el("div", { className: "bg-slate-900 border border-slate-700 rounded-xl p-6" },
         el("h3", { className: "text-white font-semibold mb-3" }, "Bot Log"),
         el("div", { className: "bg-black rounded-lg p-4 font-mono text-xs text-green-400 space-y-1 max-h-48 overflow-y-auto" }, ...logLines),
@@ -371,20 +414,11 @@ function renderDashboard() {
 }
 
 function renderSettings() {
-  const s = state.settings || {};
-  let form = {
-    broker: s.broker || "alpaca",
-    alpaca_api_key: s.alpaca_api_key || "",
-    alpaca_secret_key: s.alpaca_secret_key === "***" ? "" : (s.alpaca_secret_key || ""),
-    alpaca_paper: s.alpaca_paper !== false,
-    rh_username: s.rh_username || "",
-    rh_password: "",
-    anthropic_api_key: s.anthropic_api_key === "***" ? "" : (s.anthropic_api_key || ""),
-    max_position_usd: s.max_position_usd || 100,
-    max_daily_loss_usd: s.max_daily_loss_usd || 50,
-    run_interval_minutes: s.run_interval_minutes || 60,
-    dry_run: s.dry_run !== false,
-  };
+  // Initialize form from settings if not yet set
+  if (!state.settingsForm && state.settings) {
+    state.settingsForm = buildForm(state.settings);
+  }
+  const form = state.settingsForm || buildForm({});
 
   function field(label, hint, inputEl) {
     const children = [el("label", { className: "block text-sm font-medium text-slate-300 mb-1" }, label)];
@@ -393,85 +427,93 @@ function renderSettings() {
     return el("div", null, ...children);
   }
 
-  function toggleGroup(key, options) {
-    return el("div", { className: "flex gap-3" }, ...options.map(([label, val]) => {
-      const btn = el("button", {
-        type: "button",
-        className: "flex-1 py-2.5 rounded-lg text-sm font-medium border transition " +
-          (form[key] === val ? "bg-teal-500 border-teal-500 text-black" : "bg-slate-800 border-slate-600 text-slate-300 hover:border-slate-400"),
-        onClick: () => { form[key] = val; setState({}); }
-      }, label);
-      return btn;
-    }));
-  }
+  const mkInput = (key, type, placeholder) =>
+    inp({ type, placeholder, value: form[key] ?? "", onChange: e => updateForm(key, e.target.value) });
 
-  const mkInput = (key, type, placeholder) => {
-    const i = input({ type, placeholder, value: form[key], onChange: e => form[key] = e.target.value });
-    return i;
+  const mkNumberInput = (key, placeholder) => {
+    const e = inp({ type: "number", placeholder, value: form[key] ?? "", onChange: ev => updateForm(key, parseFloat(ev.target.value) || 0) });
+    return e;
   };
+
+  // Broker selector
+  const brokerOptions = [
+    ["Alpaca", "alpaca"],
+    ["Robinhood", "robinhood"],
+  ];
+
+  const alpacaFields = el("div", { className: "space-y-5 mt-4" },
+    el("div", { className: "bg-slate-800/60 border border-slate-600 rounded-lg p-4 text-xs text-slate-400" },
+      el("p", { className: "font-medium text-slate-300 mb-1" }, "🔗 Alpaca connects any brokerage"),
+      el("p", null, "Alpaca lets you link Fidelity, Schwab, TD Ameritrade and more. Get your free API key at alpaca.markets."),
+    ),
+    field("Alpaca API Key", null, mkInput("alpaca_api_key", "text", "PKXXXXXXXX")),
+    field("Alpaca Secret Key", null, mkInput("alpaca_secret_key", "password", "Leave blank to keep existing")),
+    field("Trading Mode", null,
+      toggleGroup([["Paper (Simulated)", true], ["Live (Real Money)", false]], form.alpaca_paper, val => updateForm("alpaca_paper", val))
+    ),
+  );
+
+  const rhFields = el("div", { className: "space-y-5 mt-4" },
+    el("div", { className: "bg-slate-800/60 border border-slate-600 rounded-lg p-4 text-xs text-slate-400" },
+      el("p", { className: "font-medium text-slate-300 mb-1" }, "🔗 Connect Robinhood directly"),
+      el("p", null, "Enter your Robinhood login. Trades are executed directly through your account."),
+    ),
+    field("Robinhood Email", null, mkInput("rh_username", "email", "you@example.com")),
+    field("Robinhood Password", null, mkInput("rh_password", "password", "Leave blank to keep existing")),
+  );
 
   const errEl = state.error ? el("div", { className: "bg-red-900/30 border border-red-700 text-red-400 rounded-lg px-4 py-3 text-sm" }, state.error) : null;
   const saveBtn = el("button", {
-    type: "submit",
+    type: "button",
     className: "w-full bg-teal-500 hover:bg-teal-400 disabled:opacity-50 text-black font-bold py-3 rounded-lg transition",
     disabled: state.loading,
+    onClick: saveSettings,
   }, state.loading ? "Saving..." : state.settingsSaved ? "Saved! ✓" : "Save Settings");
-
-  const alpacaFields = el("div", { className: "space-y-5" },
-    field("Alpaca API Key", "Free at alpaca.markets — paper + live trading, connects any brokerage", mkInput("alpaca_api_key", "text", "PKXXXXXXXX")),
-    field("Alpaca Secret Key", null, mkInput("alpaca_secret_key", "password", "••••••••")),
-    field("Trading Mode", null, toggleGroup("alpaca_paper", [["Paper (Simulated)", true], ["Live (Real Money)", false]])),
-  );
-
-  const rhFields = el("div", { className: "space-y-5" },
-    field("Robinhood Email", null, mkInput("rh_username", "email", "you@example.com")),
-    field("Robinhood Password", null, mkInput("rh_password", "password", "••••••••")),
-  );
-
-  const formEl = el("form", { className: "space-y-8" },
-    // Broker section
-    el("div", { className: "bg-slate-900 border border-slate-700 rounded-xl p-6 space-y-5" },
-      el("h2", { className: "text-white font-semibold text-lg" }, "Brokerage Connection"),
-      field("Broker", null, toggleGroup("broker", [["Alpaca (any broker)", "alpaca"], ["Robinhood", "robinhood"]])),
-      form.broker === "alpaca" ? alpacaFields : rhFields,
-    ),
-    // AI section
-    el("div", { className: "bg-slate-900 border border-slate-700 rounded-xl p-6 space-y-5" },
-      el("h2", { className: "text-white font-semibold text-lg" }, "AI (Claude)"),
-      field("Anthropic API Key", "Get at console.anthropic.com — Claude Opus makes all trading decisions", mkInput("anthropic_api_key", "password", "sk-ant-...")),
-    ),
-    // Risk section
-    el("div", { className: "bg-slate-900 border border-slate-700 rounded-xl p-6 space-y-5" },
-      el("h2", { className: "text-white font-semibold text-lg" }, "Risk Controls"),
-      el("div", { className: "grid grid-cols-2 gap-4" },
-        field("Max Position Size ($)", "Max $ per trade", mkInput("max_position_usd", "number", "100")),
-        field("Max Daily Loss ($)", "Bot pauses if exceeded", mkInput("max_daily_loss_usd", "number", "50")),
-      ),
-      field("Check Interval (minutes)", "How often Claude analyzes your portfolio", mkInput("run_interval_minutes", "number", "60")),
-      field("Mode", null, toggleGroup("dry_run", [["Simulation (safe)", true], ["Real trades", false]])),
-    ),
-    errEl,
-    saveBtn,
-  );
-
-  formEl.addEventListener("submit", e => { e.preventDefault(); saveSettings(form); });
 
   return el("div", { className: "min-h-screen fade-in" },
     el("nav", { className: "border-b border-slate-800 px-6 py-4 flex items-center gap-4" },
       el("a", { href: "#", className: "text-slate-400 hover:text-white transition text-sm", onClick: e => { e.preventDefault(); goDashboard(); } }, "← Dashboard"),
       el("span", { className: "text-white font-semibold" }, "Settings"),
     ),
-    el("div", { className: "max-w-2xl mx-auto px-4 py-8" }, formEl),
+    el("div", { className: "max-w-2xl mx-auto px-4 py-8 space-y-6" },
+      // Broker
+      el("div", { className: "bg-slate-900 border border-slate-700 rounded-xl p-6" },
+        el("h2", { className: "text-white font-semibold text-lg mb-4" }, "Brokerage Connection"),
+        field("Select your broker", null,
+          toggleGroup(brokerOptions, form.broker, val => updateForm("broker", val))
+        ),
+        form.broker === "alpaca" ? alpacaFields : rhFields,
+      ),
+      // AI
+      el("div", { className: "bg-slate-900 border border-slate-700 rounded-xl p-6 space-y-5" },
+        el("h2", { className: "text-white font-semibold text-lg" }, "AI (Claude)"),
+        field("Anthropic API Key", "Get at console.anthropic.com — Claude Opus 4 analyzes markets and makes all trading decisions", mkInput("anthropic_api_key", "password", "sk-ant-... (leave blank to keep existing)")),
+      ),
+      // Risk
+      el("div", { className: "bg-slate-900 border border-slate-700 rounded-xl p-6 space-y-5" },
+        el("h2", { className: "text-white font-semibold text-lg" }, "Risk Controls"),
+        el("div", { className: "grid grid-cols-2 gap-4" },
+          field("Max Position ($)", "Max $ per trade", mkNumberInput("max_position_usd", "100")),
+          field("Max Daily Loss ($)", "Bot pauses if hit", mkNumberInput("max_daily_loss_usd", "50")),
+        ),
+        field("Check Interval (min)", "How often Claude reviews your portfolio", mkNumberInput("run_interval_minutes", "60")),
+        field("Mode", null,
+          toggleGroup([["Simulation (safe)", true], ["Real trades", false]], form.dry_run, val => updateForm("dry_run", val))
+        ),
+      ),
+      errEl,
+      saveBtn,
+    ),
   );
 }
 
 function renderPricing() {
   const features = [
     "Claude AI analyzes your portfolio every hour",
-    "Supports Alpaca + Robinhood brokerages",
-    "Automated buy/sell decisions 24/7",
-    "Real-time trade log and portfolio dashboard",
-    "Paper trading mode to test risk-free",
+    "Supports Alpaca (any broker), Robinhood + more",
+    "Full AI reasoning — see exactly why every trade was made",
+    "Real-time market commentary from Claude",
+    "Paper trading mode — test risk-free first",
     "Cancel anytime — no lock-in",
   ];
   return el("div", { className: "min-h-screen fade-in" },
@@ -487,24 +529,20 @@ function renderPricing() {
         el("div", { className: "flex items-end gap-2 mb-6" },
           el("span", { className: "text-5xl font-bold text-white" }, "$19"),
           el("span", { className: "text-slate-400 mb-2" }, "/ month"),
+          el("span", { className: "text-xs text-teal-400 border border-teal-700 rounded-full px-2 py-1 mb-2 ml-2" }, "3-day free trial"),
         ),
         el("ul", { className: "space-y-3 mb-8" },
           ...features.map(f => el("li", { className: "flex items-center gap-3 text-slate-300 text-sm" },
-            el("span", { className: "text-teal-400 font-bold" }, "✓"),
-            f,
+            el("span", { className: "text-teal-400 font-bold" }, "✓"), f,
           ))
         ),
         el("button", {
           className: "w-full bg-teal-500 hover:bg-teal-400 disabled:opacity-50 text-black font-bold py-4 rounded-xl text-lg transition",
           disabled: state.loading,
           onClick: subscribe,
-        }, state.loading ? "Redirecting..." : "Subscribe — $19/mo"),
+        }, state.loading ? "Redirecting..." : "Start Free Trial — $19/mo after"),
       ),
-      el("p", { className: "text-slate-500 text-xs" }, "Payments secured by Stripe. Cancel anytime from your billing portal."),
-      state.subscription.status === "active"
-        ? el("p", { className: "mt-4 text-teal-400 text-sm" }, "You already have an active subscription! ",
-            el("a", { href: "#", className: "underline", onClick: e => { e.preventDefault(); goDashboard(); } }, "Go to Dashboard"))
-        : null,
+      el("p", { className: "text-slate-500 text-xs" }, "Payments secured by Stripe. Cancel anytime."),
     ),
   );
 }
@@ -536,7 +574,6 @@ function render() {
   app.appendChild(view);
 }
 
-// Handle Stripe redirect params
 const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.get("subscribed") === "true" && state.token) {
   window.history.replaceState({}, "", "/");
@@ -544,12 +581,13 @@ if (urlParams.get("subscribed") === "true" && state.token) {
   loadDashboard();
 }
 
-// Auto-refresh dashboard
 setInterval(() => {
   if (state.page === "dashboard") loadDashboard();
 }, 30000);
 
 render();
+if (state.page === "dashboard") loadDashboard();
+if (state.page === "settings") loadSettings();
 </script>
 </body>
 </html>

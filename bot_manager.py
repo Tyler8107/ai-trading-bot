@@ -27,13 +27,14 @@ def market_is_open() -> bool:
 
 def get_status(user_id: int) -> dict:
     if user_id not in _bots:
-        return {"running": False, "status": "stopped", "last_run": None, "log": []}
+        return {"running": False, "status": "stopped", "last_run": None, "log": [], "market_commentary": ""}
     bot = _bots[user_id]
     return {
         "running": bot["thread"].is_alive(),
         "status": bot["status"],
         "last_run": bot["last_run"],
         "log": bot["log"][-20:],
+        "market_commentary": bot.get("market_commentary", ""),
     }
 
 
@@ -80,6 +81,10 @@ def start_bot(user_id: int, settings) -> bool:
 
                 decisions = get_trade_decisions(portfolio, settings.max_position_usd, settings.anthropic_api_key)
                 trades = decisions.get("trades", [])
+                commentary = decisions.get("market_commentary", "")
+                if commentary:
+                    _bots[user_id]["market_commentary"] = commentary
+                    log(f"Market analysis: {commentary[:80]}")
 
                 if not trades:
                     log("Claude recommends holding. No trades.")
@@ -131,7 +136,7 @@ def start_bot(user_id: int, settings) -> bool:
         log("Bot stopped.")
 
     t = threading.Thread(target=run, daemon=True)
-    _bots[user_id] = {"thread": t, "stop": stop_event, "status": "starting", "last_run": None, "log": log_buffer}
+    _bots[user_id] = {"thread": t, "stop": stop_event, "status": "starting", "last_run": None, "log": log_buffer, "market_commentary": ""}
     t.start()
     return True
 
