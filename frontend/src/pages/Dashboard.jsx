@@ -24,6 +24,10 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [botLoading, setBotLoading] = useState(false);
   const [error, setError] = useState("");
+  const [priceTargets, setPriceTargets] = useState([]);
+  const [ptForm, setPtForm] = useState({ symbol: "", target_price: "", sell_percent: "50", expires_date: "" });
+  const [ptLoading, setPtLoading] = useState(false);
+  const [ptError, setPtError] = useState("");
   const nav = useNavigate();
 
   const email = localStorage.getItem("email") || "";
@@ -35,10 +39,13 @@ export default function Dashboard() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [p, t, s] = await Promise.all([api.getPortfolio(), api.getTrades(), api.botStatus()]);
+      const [p, t, s, pt] = await Promise.all([
+        api.getPortfolio(), api.getTrades(), api.botStatus(), api.getPriceTargets(),
+      ]);
       setPortfolio(p);
       setTrades(t);
       setBotStatus(s);
+      setPriceTargets(pt);
       setError("");
     } catch (e) {
       setError(e.message);
@@ -46,6 +53,36 @@ export default function Dashboard() {
       setLoading(false);
     }
   }, []);
+
+  async function addPriceTarget(e) {
+    e.preventDefault();
+    setPtLoading(true);
+    setPtError("");
+    try {
+      await api.createPriceTarget({
+        symbol: ptForm.symbol,
+        target_price: parseFloat(ptForm.target_price),
+        sell_percent: parseFloat(ptForm.sell_percent),
+        expires_date: ptForm.expires_date || undefined,
+      });
+      setPtForm({ symbol: "", target_price: "", sell_percent: "50", expires_date: "" });
+      const pt = await api.getPriceTargets();
+      setPriceTargets(pt);
+    } catch (e) {
+      setPtError(e.message);
+    } finally {
+      setPtLoading(false);
+    }
+  }
+
+  async function removePriceTarget(id) {
+    try {
+      await api.deletePriceTarget(id);
+      setPriceTargets(prev => prev.filter(t => t.id !== id));
+    } catch (e) {
+      setPtError(e.message);
+    }
+  }
 
   useEffect(() => {
     fetchAll();
@@ -201,6 +238,82 @@ export default function Dashboard() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Price Targets */}
+        <div className="bg-slate-900 border border-slate-700 rounded-xl p-6">
+          <h3 className="text-white font-semibold mb-4">Price-Target Sells</h3>
+          {ptError && <p className="text-red-400 text-sm mb-3">{ptError}</p>}
+
+          {/* Add form */}
+          <form onSubmit={addPriceTarget} className="flex flex-wrap gap-2 mb-5">
+            <input
+              required
+              placeholder="Ticker (e.g. SPCE)"
+              value={ptForm.symbol}
+              onChange={e => setPtForm(f => ({ ...f, symbol: e.target.value.toUpperCase() }))}
+              className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm w-32 focus:outline-none focus:border-teal-500"
+            />
+            <input
+              required type="number" min="0.01" step="0.01"
+              placeholder="Target price $"
+              value={ptForm.target_price}
+              onChange={e => setPtForm(f => ({ ...f, target_price: e.target.value }))}
+              className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm w-36 focus:outline-none focus:border-teal-500"
+            />
+            <select
+              value={ptForm.sell_percent}
+              onChange={e => setPtForm(f => ({ ...f, sell_percent: e.target.value }))}
+              className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-teal-500"
+            >
+              <option value="25">25% of position</option>
+              <option value="50">50% of position</option>
+              <option value="75">75% of position</option>
+              <option value="100">100% of position</option>
+            </select>
+            <input
+              type="date"
+              value={ptForm.expires_date}
+              onChange={e => setPtForm(f => ({ ...f, expires_date: e.target.value }))}
+              className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-teal-500"
+              title="Expires after this date (optional)"
+            />
+            <button
+              type="submit" disabled={ptLoading}
+              className="bg-teal-500 hover:bg-teal-400 text-black font-bold px-4 py-2 rounded-lg text-sm disabled:opacity-50"
+            >
+              {ptLoading ? "..." : "Add Target"}
+            </button>
+          </form>
+
+          {/* Target list */}
+          {priceTargets.length === 0 ? (
+            <p className="text-slate-500 text-sm">No price targets set.</p>
+          ) : (
+            <div className="space-y-2">
+              {priceTargets.map(t => (
+                <div key={t.id} className={`flex items-center justify-between py-2 px-3 rounded-lg border ${t.triggered ? "border-slate-700 opacity-50" : "border-slate-600"}`}>
+                  <div className="flex items-center gap-3">
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${t.triggered ? "bg-slate-700 text-slate-400" : "bg-yellow-900 text-yellow-400"}`}>
+                      {t.triggered ? "DONE" : "ACTIVE"}
+                    </span>
+                    <span className="text-white font-medium text-sm">{t.symbol}</span>
+                    <span className="text-slate-400 text-sm">@ ${t.target_price.toFixed(2)}</span>
+                    <span className="text-slate-500 text-xs">sell {t.sell_percent}%</span>
+                    {t.expires_date && <span className="text-slate-500 text-xs">expires {t.expires_date}</span>}
+                  </div>
+                  {!t.triggered && (
+                    <button
+                      onClick={() => removePriceTarget(t.id)}
+                      className="text-slate-500 hover:text-red-400 text-xs transition"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Bot log */}

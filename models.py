@@ -1,5 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, date
 
 db = SQLAlchemy()
 
@@ -41,3 +41,14 @@ class Trade(db.Model):
     result = db.Column(db.Text)
     dry_run = db.Column(db.Boolean, default=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class PriceTarget(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    symbol = db.Column(db.String(10), nullable=False)
+    target_price = db.Column(db.Float, nullable=False)
+    sell_percent = db.Column(db.Float, nullable=False, default=100.0)
+    triggered = db.Column(db.Boolean, default=False)
+    expires_date = db.Column(db.Date, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)

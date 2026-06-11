@@ -8,7 +8,7 @@ from flask_cors import CORS
 from flask_jwt_extended import (
     JWTManager, create_access_token, jwt_required, get_jwt_identity
 )
-from models import db, User, BotSettings, Trade
+from models import db, User, BotSettings, Trade, PriceTarget
 import bot_manager
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
@@ -28,6 +28,7 @@ jwt = JWTManager(app)
 
 with app.app_context():
     db.create_all()
+    bot_manager.start_price_target_monitor()
     # Add columns that may be missing from older databases
     try:
         with db.engine.connect() as conn:
@@ -165,6 +166,72 @@ def get_trades():
         "dry_run": t.dry_run,
         "timestamp": t.timestamp.isoformat(),
     } for t in trades])
+
+
+# ── Price Targets ─────────────────────────────────────────────────────────────
+
+@app.route("/api/price-targets", methods=["GET"])
+@jwt_required()
+def get_price_targets():
+    uid = int(get_jwt_identity())
+    targets = PriceTarget.query.filter_by(user_id=uid).order_by(PriceTarget.created_at.desc()).all()
+    return jsonify([{
+        "id": t.id,
+        "symbol": t.symbol,
+        "target_price": t.target_price,
+        "sell_percent": t.sell_percent,
+        "triggered": t.triggered,
+        "expires_date": t.expires_date.isoformat() if t.expires_date else None,
+        "created_at": t.created_at.isoformat(),
+    } for t in targets])
+
+
+@app.route("/api/price-targets", methods=["POST"])
+@jwt_required()
+def create_price_target():
+    uid = int(get_jwt_identity())
+    data = request.json
+    symbol = (data.get("symbol") or "").upper().strip()
+    try:
+        target_price = float(data.get("target_price", 0))
+        sell_percent = float(data.get("sell_percent", 100.0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid target_price or sell_percent"}), 400
+    if not symbol or target_price <= 0:
+        return jsonify({"error": "symbol and target_price required"}), 400
+    if not (0 < sell_percent <= 100):
+        return jsonify({"error": "sell_percent must be between 1 and 100"}), 400
+
+    expires_date = None
+    if data.get("expires_date"):
+        from datetime import date
+        try:
+            expires_date = date.fromisoformat(data["expires_date"])
+        except ValueError:
+            return jsonify({"error": "Invalid expires_date format (use YYYY-MM-DD)"}), 400
+
+    target = PriceTarget(
+        user_id=uid,
+        symbol=symbol,
+        target_price=target_price,
+        sell_percent=sell_percent,
+        expires_date=expires_date,
+    )
+    db.session.add(target)
+    db.session.commit()
+    return jsonify({"id": target.id, "success": True}), 201
+
+
+@app.route("/api/price-targets/<int:target_id>", methods=["DELETE"])
+@jwt_required()
+def delete_price_target(target_id):
+    uid = int(get_jwt_identity())
+    target = PriceTarget.query.filter_by(id=target_id, user_id=uid).first()
+    if not target:
+        return jsonify({"error": "Not found"}), 404
+    db.session.delete(target)
+    db.session.commit()
+    return jsonify({"success": True})
 
 
 # ── Stripe ────────────────────────────────────────────────────────────────────

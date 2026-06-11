@@ -29,4 +29,7 @@ export const api = {
   startBot: () => req("POST", "/bot/start"),
   stopBot: () => req("POST", "/bot/stop"),
   botStatus: () => req("GET", "/bot/status"),
+  getPriceTargets: () => req("GET", "/price-targets"),
+  createPriceTarget: (data) => req("POST", "/price-targets", data),
+  deletePriceTarget: (id) => req("DELETE", `/price-targets/${id}`),
 };

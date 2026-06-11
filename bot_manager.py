@@ -2,12 +2,12 @@
 import logging
 import threading
 import time
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, date
 from zoneinfo import ZoneInfo
 from typing import Optional
 
 from analyzer import get_trade_decisions
-from broker import get_alpaca_portfolio, execute_alpaca_trade, get_rh_portfolio, execute_rh_trade
+from broker import get_alpaca_portfolio, execute_alpaca_trade, get_rh_portfolio, execute_rh_trade, execute_rh_price_target_sell
 
 logger = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -16,6 +16,90 @@ MARKET_CLOSE = dtime(16, 0)
 
 # user_id -> {"thread": Thread, "stop": Event, "status": str, "last_run": str, "log": []}
 _bots: dict = {}
+
+# Global price-target monitor (single thread watches all users)
+_pt_thread: Optional[threading.Thread] = None
+_pt_stop = threading.Event()
+
+
+def _check_price_targets():
+    """Check all pending price targets and execute live sells when hit."""
+    from app import app
+    with app.app_context():
+        from models import db, PriceTarget, BotSettings, Trade
+        today = date.today()
+        targets = PriceTarget.query.filter_by(triggered=False).filter(
+            db.or_(PriceTarget.expires_date.is_(None), PriceTarget.expires_date >= today)
+        ).all()
+
+        if not targets:
+            return
+
+        from collections import defaultdict
+        by_user: dict = defaultdict(list)
+        for t in targets:
+            by_user[t.user_id].append(t)
+
+        for user_id, user_targets in by_user.items():
+            settings = BotSettings.query.filter_by(user_id=user_id).first()
+            if not settings or not settings.rh_username or not settings.rh_password:
+                continue
+
+            import robin_stocks.robinhood as rh
+            try:
+                login_result = rh.login(username=settings.rh_username, password=settings.rh_password, store_session=True)
+                if not login_result or not login_result.get("access_token"):
+                    logger.warning(f"[user:{user_id}] Robinhood login failed for price target check")
+                    continue
+
+                for target in user_targets:
+                    try:
+                        prices = rh.stocks.get_latest_price(target.symbol)
+                        if not prices or not prices[0]:
+                            continue
+                        current_price = float(prices[0])
+
+                        if current_price >= target.target_price:
+                            order_result, amount_usd = execute_rh_price_target_sell(
+                                settings.rh_username, settings.rh_password,
+                                target.symbol, target.sell_percent,
+                            )
+                            target.triggered = True
+                            db.session.add(Trade(
+                                user_id=user_id,
+                                symbol=target.symbol,
+                                action="sell",
+                                amount_usd=amount_usd,
+                                reason=f"Price target: ${current_price:.2f} >= ${target.target_price:.2f} ({target.sell_percent:.0f}% of position)",
+                                result=str(order_result),
+                                dry_run=False,
+                            ))
+                            db.session.commit()
+                            logger.info(f"[user:{user_id}] Price target hit — SELL {target.sell_percent:.0f}% {target.symbol} @ ${current_price:.2f} (${amount_usd:.2f})")
+                    except Exception as e:
+                        logger.error(f"[user:{user_id}] Price target error ({target.symbol}): {e}")
+            except Exception as e:
+                logger.error(f"[user:{user_id}] Login error in price target monitor: {e}")
+
+
+def start_price_target_monitor():
+    global _pt_thread, _pt_stop
+    if _pt_thread and _pt_thread.is_alive():
+        return
+    _pt_stop = threading.Event()
+
+    def run():
+        while not _pt_stop.is_set():
+            if market_is_open():
+                try:
+                    _check_price_targets()
+                except Exception as e:
+                    logger.error(f"Price target monitor error: {e}")
+            _pt_stop.wait(60)
+
+    _pt_thread = threading.Thread(target=run, daemon=True)
+    _pt_thread.start()
+    logger.info("Price target monitor started")
 
 
 def market_is_open() -> bool:

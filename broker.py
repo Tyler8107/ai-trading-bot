@@ -156,3 +156,24 @@ def execute_rh_trade(username: str, password: str, symbol: str,
         result = rh.orders.order_sell_fractional_by_price(symbol, amount_usd)
 
     return {"status": "submitted", "order_id": result.get("id"), "symbol": symbol, "action": action}
+
+
+def execute_rh_price_target_sell(username: str, password: str, symbol: str,
+                                  sell_percent: float) -> tuple[dict, float]:
+    """Login, fetch live holdings, sell sell_percent% of the position. Returns (order_result, amount_sold)."""
+    import robin_stocks.robinhood as rh
+
+    login_result = rh.login(username=username, password=password, store_session=True)
+    if not login_result or not login_result.get("access_token"):
+        raise Exception("Robinhood login failed")
+
+    holdings = rh.account.build_holdings() or {}
+    holding = holdings.get(symbol, {})
+    equity = float(holding.get("equity", 0))
+
+    if equity <= 0:
+        raise Exception(f"No {symbol} holdings found (equity=${equity})")
+
+    amount_usd = round(equity * (sell_percent / 100.0), 2)
+    result = rh.orders.order_sell_fractional_by_price(symbol, amount_usd)
+    return result, amount_usd
