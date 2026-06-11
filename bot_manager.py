@@ -103,9 +103,10 @@ def start_bot(user_id: int, settings) -> bool:
                                     amount, settings.dry_run,
                                 )
                             else:
+                                # Robinhood trading disabled — all RH orders run as dry_run
                                 result = execute_rh_trade(
                                     settings.rh_username, settings.rh_password,
-                                    trade["symbol"], trade["action"], amount, settings.dry_run,
+                                    trade["symbol"], trade["action"], amount, dry_run=True,
                                 )
 
                             db.session.add(Trade(
